@@ -1,0 +1,12 @@
+# Verified against the imports in dbs_core.py, dbs_checks.py, dbs_plots.py,
+# dbs_reward_model.py, dbs_t3p.py and helpers.py.
+numpy
+scipy
+torch
+matplotlib
+openpyxl
+
+# MATLAB Engine for Python is not pip-installable. Install it from your MATLAB
+# installation, into the interpreter you run Jupyter with:
+#   cd "$(matlab -batch 'disp(matlabroot)')/extern/engines/python"
+#   python setup.py install

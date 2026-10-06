@@ -1,0 +1,18 @@
+# MATLAB simulation state — rewritten every step, never commit
+bgn_vars.mat
+*.mat
+
+# Regenerable caches
+runs_*/
+checkpoints/
+datasets/*.npz
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# OS
+.DS_Store
