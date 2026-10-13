@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from dbs_core import Config, denormalize_action
+from dbs_env import Config, denormalize_action
 
 __version__ = "2.6.0"
 

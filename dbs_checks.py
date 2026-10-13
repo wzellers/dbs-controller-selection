@@ -1,13 +1,31 @@
-import shutil
+"""
+Pre-flight checks. Run these before trusting the output of any experiment.
+
+STATUS: active.
+
+Contents
+    versions()          confirm the modules on disk are all the same release
+    offline()           fast checks needing no MATLAB: action scaling, Hjorth features
+    live(env, ...)      probe the real environment at a set of candidate actions
+    reward_landscape()  tabulate reward terms across probed actions
+    baseline(env, ...)  fixed open-loop stimulation, the bar any agent must clear
+    suggest_bounds()    propose state-normalisation bounds from observed samples
+    rms_range(), tune_rms_max()   calibrate the energy term
+
+The TD3 agent's own offline checks moved to archive/dbs_td3_checks.py when that
+approach was retired.
+
+Imported by
+    dbs_reward_model.ipynb, dbs_t3p_sweeps.ipynb
+"""
+
 import tempfile
 from pathlib import Path
 
 import numpy as np
-import torch
 
-import dbs_core
-from dbs_core import (Config, TD3Agent, ReplayBuffer, MockEnv, RunLogger,
-                      denormalize_action, train, collapsed)
+import dbs_env
+from dbs_env import Config, MockEnv, denormalize_action
 
 __version__ = "2.6.0"
 
@@ -34,7 +52,7 @@ class Report:
 
 def versions():
     import dbs_plots
-    mods = {"dbs_core": dbs_core.__version__,
+    mods = {"dbs_env": dbs_env.__version__,
             "dbs_plots": dbs_plots.__version__,
             "dbs_checks": __version__}
     print("module versions:")
@@ -42,75 +60,27 @@ def versions():
         print(f"  {k:<12} {v}")
     ok = len(set(mods.values())) == 1
     if not ok:
-        print("\n  VERSION MISMATCH — one or more files on disk are stale.")
-        print("  Re-download all four files, then restart the kernel.")
+        print("\n  VERSION MISMATCH - one or more files on disk are stale.")
+        print("  Re-pull the repo, then restart the kernel.")
     else:
-        print(f"\n  all modules at {mods['dbs_core']} — files are in sync")
+        print(f"\n  all modules at {mods['dbs_env']} - files are in sync")
     return ok
 
 
-def offline(hidden_dim=64):
-    r = Report(f"offline checks (hidden_dim={hidden_dim})")
-    cfg = Config(hidden_dim=hidden_dim)
-
-    agent = TD3Agent(cfg)
-    s = torch.randn(8, cfg.state_dim)
-    a = agent.actor(s)
-    q1, q2 = agent.critic(s, a)
-    r.add("actor output shape", tuple(a.shape) == (8, cfg.action_dim))
-    r.add("actor bounded in [-1,1]", bool((a.abs() <= 1).all()))
-    r.add("critic returns scalars", tuple(q1.shape) == (8, 1) and tuple(q2.shape) == (8, 1))
-    r.add("twin critics differ", not torch.allclose(q1, q2))
-    na, nc = agent.param_counts()
-    print(f"         actor={na} critic={nc} params")
+def offline():
+    """Checks that need no MATLAB and no agent. Seconds to run."""
+    r = Report("offline checks")
+    cfg = Config()
 
     r.add("action min -> (0,0)", denormalize_action(np.array([-1.0, -1.0]), cfg) == (0.0, 0.0))
     r.add("action max -> bounds",
           denormalize_action(np.array([1.0, 1.0]), cfg) == (cfg.freq_max, cfg.amp_max))
 
-    buf = ReplayBuffer(cfg.state_dim, cfg.action_dim, max_size=10)
-    for i in range(25):
-        buf.add(np.full(cfg.state_dim, i), np.zeros(cfg.action_dim), -i,
-                np.zeros(cfg.state_dim), False)
-    r.add("buffer caps at max_size", buf.size == 10)
-    r.add("buffer wraps", buf.ptr == 5)
-
     vgi = np.random.RandomState(0).randn(10, 20000) * 30
-    raw = dbs_core.hjorth_raw(vgi, 15000, 4000)
+    raw = dbs_env.hjorth_raw(vgi, 15000, 4000)
     r.add("hjorth returns 4 finite values",
           all(np.isfinite(raw[k]) for k in ["sd", "activity", "mobility", "complexity"]),
           f"window {raw['window_shape']}")
-
-    d = tempfile.mkdtemp()
-    c = Config(**{**cfg.__dict__, "n_episodes": 2, "steps_per_episode": 5,
-                  "warmup_steps": 10 ** 9, "checkpoint_every": 10 ** 9, "run_dir": d})
-    agent2, logger = train(c, MockEnv(c), verbose=False)
-    b2 = ReplayBuffer(c.state_dim, c.action_dim)
-    logger.load_latest(agent2, b2)
-    r.add("time-limit steps NOT marked done", float(b2.dones[:b2.size].sum()) == 0.0,
-          f"{int(b2.dones[:b2.size].sum())} of {b2.size}")
-
-    restored = TD3Agent(c)
-    logger.checkpoint(42, agent2)
-    ep = logger.load_latest(restored)
-    same = all(torch.allclose(p, q) for p, q in
-               zip(agent2.actor.parameters(), restored.actor.parameters()))
-    r.add("checkpoint roundtrip", ep == 42 and same)
-    shutil.rmtree(d, ignore_errors=True)
-
-    d = tempfile.mkdtemp()
-    c = Config(**{**cfg.__dict__, "n_episodes": 250, "steps_per_episode": 10,
-                  "warmup_steps": 200, "checkpoint_every": 10 ** 9, "run_dir": d})
-    _, logger = train(c, MockEnv(c), verbose=False)
-    import csv
-    rows = list(csv.DictReader(open(logger.dir / "metrics.csv")))
-    rew = [float(x["base_reward"]) for x in rows]
-    frq = [float(x["avg_freq"]) for x in rows]
-    amp = [float(x["avg_amp"]) for x in rows]
-    r.add("learns on mock env", np.mean(rew[-30:]) > np.mean(rew[:30]),
-          f"{np.mean(rew[:30]):+.4f} -> {np.mean(rew[-30:]):+.4f}")
-    r.add("no collapse on mock", not collapsed(frq, amp), f"final freq {np.mean(frq[-30:]):.1f} Hz")
-    shutil.rmtree(d, ignore_errors=True)
 
     return r.summary()
 
